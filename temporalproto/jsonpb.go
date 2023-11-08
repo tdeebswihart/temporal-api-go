@@ -76,6 +76,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/iancoleman/strcase"
+	"go.temporal.io/api/internal/strs"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/reflect/protoregistry"
@@ -791,28 +793,9 @@ func UnmarshalString(str string, pb proto.Message) error {
 	return new(JSONUnmarshaler).Unmarshal(strings.NewReader(str), pb)
 }
 
-func unmarshalEnum(tok json.Token, fd protoreflect.FieldDescriptor) (protoreflect.Value, bool) {
-	switch tok.Kind() {
-	case json.String:
-		// Lookup EnumNumber based on name.
-		s := tok.ParsedString()
-		if enumVal := fd.Enum().Values().ByName(protoreflect.Name(s)); enumVal != nil {
-			return protoreflect.ValueOfEnum(enumVal.Number()), true
-		}
-
-	case json.Number:
-		if n, ok := tok.Int(32); ok {
-			return protoreflect.ValueOfEnum(protoreflect.EnumNumber(n)), true
-		}
-
-	case json.Null:
-		// This is only valid for google.protobuf.NullValue.
-		if isNullValue(fd) {
-			return protoreflect.ValueOfEnum(0), true
-		}
-	}
-
-	return protoreflect.Value{}, false
+func isNullValue(fd protoreflect.FieldDescriptor) bool {
+	ed := fd.Enum()
+	return ed != nil && ed.FullName() == "google.protobuf.NullValue"
 }
 
 // unmarshalValue converts/copies a value into the target.
@@ -845,7 +828,7 @@ func (u *JSONUnmarshaler) unmarshalValue(target reflect.Value, inputValue json.R
 	}
 
 	// Handle well-known types that are not pointers.
-	// FIXME update this
+	// FIXME update this using genid
 	if w, ok := target.Addr().Interface().(isWkt); ok {
 		switch w.XXX_WellKnownType() {
 		case "DoubleValue", "FloatValue", "Int64Value", "UInt64Value",
@@ -1011,19 +994,18 @@ func (u *JSONUnmarshaler) unmarshalValue(target reflect.Value, inputValue json.R
 	// The case of an enum appearing as a number is handled
 	// at the bottom of this function.
 	if inputValue[0] == '"' && prop != nil && prop.Kind() == protoreflect.EnumKind {
-		// FIXME find enum type and use FromString if it exists...
-		vmap := proto.EnumValueMap(prop.Enum)
-		values := 
-		if enumVal := prop.Enum().Values().ByName(protoreflect.Name(s)); enumVal != nil {
-			return protoreflect.ValueOfEnum(enumVal.Number()), true
-		}
+		ed := prop.Enum()
+		typePrefix := strcase.ToScreamingSnake(string(ed.Name()))
 		// Don't need to do unquoting; valid enum names
 		// are from a limited character set.
-		// FIXME handle both kinds here
-		s := inputValue[1 : len(inputValue)-1]
-		n, ok := vmap[string(s)]
-		if !ok {
-			return fmt.Errorf("unknown value %q for enum %s", s, prop.Enum)
+		s := string(inputValue[1 : len(inputValue)-1])
+		// Translate old-school temporal CamelCase enums to their canonical json forms
+		if !strings.HasPrefix(s, typePrefix) {
+			s = fmt.Sprintf("%s_%s", typePrefix, strcase.ToScreamingSnake(s))
+		}
+		enumVal := ed.Values().ByName(protoreflect.Name(s))
+		if enumVal == nil {
+			return fmt.Errorf("unknown value %q for enum %s", s, ed.Name())
 		}
 		if target.Kind() == reflect.Ptr { // proto2
 			target.Set(reflect.New(targetType.Elem()))
@@ -1032,7 +1014,7 @@ func (u *JSONUnmarshaler) unmarshalValue(target reflect.Value, inputValue json.R
 		if targetType.Kind() != reflect.Int32 {
 			return fmt.Errorf("invalid target %q for enum %s", targetType.Kind(), prop.Enum)
 		}
-		target.SetInt(int64(n))
+		target.SetInt(int64(enumVal.Number()))
 		return nil
 	}
 
@@ -1051,7 +1033,7 @@ func (u *JSONUnmarshaler) unmarshalValue(target reflect.Value, inputValue json.R
 			return err
 		}
 
-		consumeField := func(prop *protoreflect.MessageDescriptor) (json.RawMessage, bool) {
+		consumeField := func(prop protoreflect.FieldDescriptor) (json.RawMessage, bool) {
 			// Be liberal in what names we accept; both orig_name and camelName are okay.
 			fieldNames := acceptedJSONFieldNames(prop)
 
@@ -1073,39 +1055,59 @@ func (u *JSONUnmarshaler) unmarshalValue(target reflect.Value, inputValue json.R
 			return raw, true
 		}
 
-		sprops := proto.GetProperties(targetType)
+		sprops := prop.Message()
 		for i := 0; i < target.NumField(); i++ {
 			ft := target.Type().Field(i)
 			if strings.HasPrefix(ft.Name, "XXX_") {
 				continue
 			}
-			valueForField, ok := consumeField(sprops.Prop[i])
+			fi := sprops.Fields().Get(i)
+			valueForField, ok := consumeField(fi)
 			if !ok {
 				continue
 			}
 
-			if err := u.unmarshalValue(target.Field(i), valueForField, sprops.Prop[i]); err != nil {
+			if err := u.unmarshalValue(target.Field(i), valueForField, fi); err != nil {
 				return err
 			}
 		}
 		// Check for any oneof fields.
 		if len(jsonFields) > 0 {
-			for _, oop := range sprops.OneofTypes {
-				raw, ok := consumeField(oop.Prop)
-				if !ok {
-					continue
-				}
-				nv := reflect.New(oop.Type.Elem())
-				target.Field(oop.Field).Set(nv)
-				if err := u.unmarshalValue(nv.Elem().Field(0), raw, oop.Prop); err != nil {
-					return err
+			oneofs := sprops.Oneofs()
+			for i := 0; i < oneofs.Len(); i++ {
+				oop := oneofs.Get(i)
+				fields := oop.Fields()
+				for j := 0; j < fields.Len(); j++ {
+					fp := fields.Get(j)
+					raw, ok := consumeField(fp)
+					if !ok {
+						continue
+					}
+					mt, err := protoregistry.GlobalTypes.FindMessageByName(fp.FullName())
+					if err != nil {
+						return fmt.Errorf("unable to find message %s: %w", fp.FullName(), err)
+					}
+					nv := reflect.ValueOf(mt.New())
+					target.FieldByName(strs.GoCamelCase(fp.TextName())).Set(nv)
+					if err := u.unmarshalValue(nv.Elem().Field(0), raw, fp); err != nil {
+						return err
+					}
 				}
 			}
 		}
 		// Handle proto2 extensions.
 		if len(jsonFields) > 0 {
 			if ep, ok := target.Addr().Interface().(proto.Message); ok {
-				for _, ext := range proto.RegisteredExtensions(ep) {
+				extensions := sprops.Extensions()
+				for i := 0; i < extensions.Len(); i++ {
+					desc := extensions.Get(i)
+					et, err := protoregistry.GlobalTypes.FindExtensionByName(desc.FullName())
+					if err != nil {
+						return fmt.Errorf("unknown extension %s", desc.FullName())
+					}
+					if !proto.HasExtension(ep, et) {
+						continue
+					}
 					name := fmt.Sprintf("[%s]", ext.Name)
 					raw, ok := jsonFields[name]
 					if !ok {
@@ -1193,7 +1195,7 @@ func (u *JSONUnmarshaler) unmarshalValue(target reflect.Value, inputValue json.R
 					k = reflect.ValueOf(ks)
 				} else {
 					k = reflect.New(targetType.Key()).Elem()
-					var kprop *protoreflect.MessageDescriptor
+					var kprop protoreflect.FieldDescriptor
 					if prop != nil && prop.MapKeyProp != nil {
 						kprop = prop.MapKeyProp
 					}
@@ -1208,7 +1210,7 @@ func (u *JSONUnmarshaler) unmarshalValue(target reflect.Value, inputValue json.R
 
 				// Unmarshal map value.
 				v := reflect.New(targetType.Elem()).Elem()
-				var vprop *protoreflect.MessageDescriptor
+				var vprop protoreflect.FieldDescriptor
 				if prop != nil && prop.MapValProp != nil {
 					vprop = prop.MapValProp
 				}
@@ -1253,10 +1255,10 @@ type fieldNames struct {
 	orig, camel string
 }
 
-func acceptedJSONFieldNames(prop *protoreflect.MessageDescriptor) fieldNames {
-	opts := fieldNames{orig: prop.OrigName, camel: prop.OrigName}
-	if prop.JSONName != "" {
-		opts.camel = prop.JSONName
+func acceptedJSONFieldNames(prop protoreflect.FieldDescriptor) fieldNames {
+	opts := fieldNames{orig: prop.TextName(), camel: prop.TextName()}
+	if prop.JSONName() != "" {
+		opts.camel = prop.JSONName()
 	}
 	return opts
 }
@@ -1327,9 +1329,12 @@ func checkRequiredFields(pb proto.Message) error {
 		return nil
 	}
 
+	sprop := pb.ProtoReflect().Descriptor()
+	pbfields := sprop.Fields()
 	for i := 0; i < v.NumField(); i++ {
 		field := v.Field(i)
 		sfield := v.Type().Field(i)
+		prop := pbfields.Get(i)
 
 		if sfield.PkgPath != "" {
 			// blank PkgPath means the field is exported; skip if not exported
@@ -1362,8 +1367,6 @@ func checkRequiredFields(pb proto.Message) error {
 		if protoTag == "" {
 			continue
 		}
-		var prop protoreflect.MessageDescriptor
-		prop.Init(sfield.Type, sfield.Name, protoTag, &sfield)
 
 		switch field.Kind() {
 		case reflect.Map:
@@ -1380,8 +1383,8 @@ func checkRequiredFields(pb proto.Message) error {
 			}
 		case reflect.Slice:
 			// Handle non-repeated type, e.g. bytes.
-			if !prop.Repeated {
-				if prop.Required && field.IsNil() {
+			if prop.Cardinality() != protoreflect.Repeated {
+				if prop.Cardinality() == protoreflect.Required && field.IsNil() {
 					return fmt.Errorf("required field %q is not set", prop.Name)
 				}
 				continue
@@ -1400,7 +1403,7 @@ func checkRequiredFields(pb proto.Message) error {
 			}
 		case reflect.Ptr:
 			if field.IsNil() {
-				if prop.Required {
+				if prop.Cardinality() == protoreflect.Required {
 					return fmt.Errorf("required field %q is not set", prop.Name)
 				}
 				continue
@@ -1412,15 +1415,17 @@ func checkRequiredFields(pb proto.Message) error {
 	}
 
 	// Handle proto2 extensions.
-	for _, ext := range proto.RegisteredExtensions(pb) {
-		if !proto.HasExtension(pb, ext) {
+	extensions := sprop.Extensions()
+	for i := 0; i < extensions.Len(); i++ {
+		desc := extensions.Get(i)
+		et, err := protoregistry.GlobalTypes.FindExtensionByName(desc.FullName())
+		if err != nil {
+			return fmt.Errorf("unknown extension %s", desc.FullName())
+		}
+		if !proto.HasExtension(pb, et) {
 			continue
 		}
-		ep, err := proto.GetExtension(pb, ext)
-		if err != nil {
-			return err
-		}
-		err = checkRequiredFieldsInValue(reflect.ValueOf(ep))
+		err = checkRequiredFieldsInValue(reflect.ValueOf(pb))
 		if err != nil {
 			return err
 		}
