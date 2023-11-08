@@ -182,13 +182,6 @@ var nonFinite = map[string]float64{
 	`"-Infinity"`: math.Inf(-1),
 }
 
-// For sorting extensions ids to ensure stable output.
-func (s extensionTypeSlice) Len() int { return len(s) }
-func (s extensionTypeSlice) Less(i, j int) bool {
-	return s[i].TypeDescriptor().Descriptor().Number() < s[j].TypeDescriptor().Descriptor().Number()
-}
-func (s extensionTypeSlice) Swap(i, j int) { s[i], s[j] = s[j], s[i] }
-
 type isWkt interface {
 	XXX_WellKnownType() string
 }
@@ -395,36 +388,6 @@ func (m *JSONMarshaler) marshalObject(out *errWriter, v proto.Message, indent, t
 			return err
 		}
 		firstField = false
-	}
-
-	// Handle proto2 extensions.
-	if ep, ok := v.(proto.Message); ok {
-		extensions := sprop.Extensions()
-		// Sort extensions for stable output.
-		ets := make([]protoreflect.ExtensionType, 0, extensions.Len())
-		for i := 0; i < extensions.Len(); i++ {
-			desc := extensions.Get(i)
-			et, err := protoregistry.GlobalTypes.FindExtensionByName(desc.FullName())
-			if err != nil {
-				return fmt.Errorf("unknown extension %s", desc.FullName())
-			}
-			if !proto.HasExtension(ep, et) {
-				continue
-			}
-			ets = append(ets, et)
-		}
-		sort.Sort(extensionTypeSlice(ets))
-		for _, ext := range ets {
-			value := reflect.ValueOf(ext.New())
-			if !firstField {
-				m.writeSep(out)
-			}
-			if err := m.marshalField(out, ext.TypeDescriptor(), value, indent); err != nil {
-				return err
-			}
-			firstField = false
-		}
-
 	}
 
 	if m.Indent != "" {
@@ -692,8 +655,8 @@ func (m *JSONMarshaler) marshalValue(out *errWriter, prop protoreflect.FieldDesc
 
 			vprop := prop
 			// TODO?
-			// if prop != nil && prop.MapValProp != nil {
-			// 	vprop = prop.MapValProp
+			// if prop != nil && prop.MapValue() != nil {
+			// 	vprop = prop.MapValue()
 			// }
 			if err := m.marshalValue(out, vprop, v.MapIndex(k), indent+m.Indent); err != nil {
 				return err
@@ -747,7 +710,7 @@ func (m *JSONMarshaler) marshalValue(out *errWriter, prop protoreflect.FieldDesc
 type JSONUnmarshaler struct {
 	// Whether to allow messages to contain unknown fields, as opposed to
 	// failing to unmarshal.
-	AllowUnknownFields bool
+	DiscardUnknown bool
 }
 
 // UnmarshalNext unmarshals the next protocol buffer from a JSON object stream.
@@ -758,7 +721,7 @@ func (u *JSONUnmarshaler) UnmarshalNext(dec *json.Decoder, pb proto.Message) err
 	if err := dec.Decode(&inputValue); err != nil {
 		return err
 	}
-	if err := u.unmarshalValue(reflect.ValueOf(pb).Elem(), inputValue, nil); err != nil {
+	if err := u.unmarshalMessage(pb, inputValue); err != nil {
 		return err
 	}
 	return checkRequiredFields(pb)
@@ -796,6 +759,12 @@ func UnmarshalString(str string, pb proto.Message) error {
 func isNullValue(fd protoreflect.FieldDescriptor) bool {
 	ed := fd.Enum()
 	return ed != nil && ed.FullName() == "google.protobuf.NullValue"
+}
+
+func (u *JSONUnmarshaler) unmarshalMessage(pb proto.Message, inputValue json.RawMessage) error {
+	m := pb.ProtoReflect()
+	prop := m.Descriptor()
+
 }
 
 // unmarshalValue converts/copies a value into the target.
@@ -1012,7 +981,7 @@ func (u *JSONUnmarshaler) unmarshalValue(target reflect.Value, inputValue json.R
 			target = target.Elem()
 		}
 		if targetType.Kind() != reflect.Int32 {
-			return fmt.Errorf("invalid target %q for enum %s", targetType.Kind(), prop.Enum)
+			return fmt.Errorf("invalid target %q for enum %s", targetType.Kind(), prop.Name())
 		}
 		target.SetInt(int64(enumVal.Number()))
 		return nil
@@ -1095,36 +1064,7 @@ func (u *JSONUnmarshaler) unmarshalValue(target reflect.Value, inputValue json.R
 				}
 			}
 		}
-		// Handle proto2 extensions.
-		if len(jsonFields) > 0 {
-			if ep, ok := target.Addr().Interface().(proto.Message); ok {
-				extensions := sprops.Extensions()
-				for i := 0; i < extensions.Len(); i++ {
-					desc := extensions.Get(i)
-					et, err := protoregistry.GlobalTypes.FindExtensionByName(desc.FullName())
-					if err != nil {
-						return fmt.Errorf("unknown extension %s", desc.FullName())
-					}
-					if !proto.HasExtension(ep, et) {
-						continue
-					}
-					name := fmt.Sprintf("[%s]", ext.Name)
-					raw, ok := jsonFields[name]
-					if !ok {
-						continue
-					}
-					delete(jsonFields, name)
-					nv := reflect.New(reflect.TypeOf(ext.ExtensionType).Elem())
-					if err := u.unmarshalValue(nv.Elem(), raw, nil); err != nil {
-						return err
-					}
-					if err := proto.SetExtension(ep, ext, nv.Interface()); err != nil {
-						return err
-					}
-				}
-			}
-		}
-		if !u.AllowUnknownFields && len(jsonFields) > 0 {
+		if !u.DiscardUnknown && len(jsonFields) > 0 {
 			// Pick any field to be the scapegoat.
 			var f string
 			for fname := range jsonFields {
@@ -1196,8 +1136,8 @@ func (u *JSONUnmarshaler) unmarshalValue(target reflect.Value, inputValue json.R
 				} else {
 					k = reflect.New(targetType.Key()).Elem()
 					var kprop protoreflect.FieldDescriptor
-					if prop != nil && prop.MapKeyProp != nil {
-						kprop = prop.MapKeyProp
+					if prop != nil && prop.MapKey() != nil {
+						kprop = prop.MapKey()
 					}
 					if err := u.unmarshalValue(k, json.RawMessage(ks), kprop); err != nil {
 						return err
@@ -1211,8 +1151,8 @@ func (u *JSONUnmarshaler) unmarshalValue(target reflect.Value, inputValue json.R
 				// Unmarshal map value.
 				v := reflect.New(targetType.Elem()).Elem()
 				var vprop protoreflect.FieldDescriptor
-				if prop != nil && prop.MapValProp != nil {
-					vprop = prop.MapValProp
+				if prop != nil && prop.MapValue() != nil {
+					vprop = prop.MapValue()
 				}
 				if err := u.unmarshalValue(v, raw, vprop); err != nil {
 					return err
@@ -1385,7 +1325,7 @@ func checkRequiredFields(pb proto.Message) error {
 			// Handle non-repeated type, e.g. bytes.
 			if prop.Cardinality() != protoreflect.Repeated {
 				if prop.Cardinality() == protoreflect.Required && field.IsNil() {
-					return fmt.Errorf("required field %q is not set", prop.Name)
+					return fmt.Errorf("required field %q is not set", prop.Name())
 				}
 				continue
 			}
@@ -1404,30 +1344,13 @@ func checkRequiredFields(pb proto.Message) error {
 		case reflect.Ptr:
 			if field.IsNil() {
 				if prop.Cardinality() == protoreflect.Required {
-					return fmt.Errorf("required field %q is not set", prop.Name)
+					return fmt.Errorf("required field %q is not set", prop.Name())
 				}
 				continue
 			}
 			if err := checkRequiredFieldsInValue(field); err != nil {
 				return err
 			}
-		}
-	}
-
-	// Handle proto2 extensions.
-	extensions := sprop.Extensions()
-	for i := 0; i < extensions.Len(); i++ {
-		desc := extensions.Get(i)
-		et, err := protoregistry.GlobalTypes.FindExtensionByName(desc.FullName())
-		if err != nil {
-			return fmt.Errorf("unknown extension %s", desc.FullName())
-		}
-		if !proto.HasExtension(pb, et) {
-			continue
-		}
-		err = checkRequiredFieldsInValue(reflect.ValueOf(pb))
-		if err != nil {
-			return err
 		}
 	}
 

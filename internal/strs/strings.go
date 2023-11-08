@@ -11,17 +11,11 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"google.golang.org/protobuf/internal/flags"
 	"google.golang.org/protobuf/reflect/protoreflect"
 )
 
 // EnforceUTF8 reports whether to enforce strict UTF-8 validation.
 func EnforceUTF8(fd protoreflect.FieldDescriptor) bool {
-	if flags.ProtoLegacy {
-		if fd, ok := fd.(interface{ EnforceUTF8() bool }); ok {
-			return fd.EnforceUTF8()
-		}
-	}
 	return fd.Syntax() == protoreflect.Proto3
 }
 
