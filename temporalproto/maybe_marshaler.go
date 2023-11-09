@@ -24,13 +24,13 @@ package temporalproto
 
 // JSONPBMaybeMarshaler is implemented by any proto struct that wants to
 // customize optional Temporal-specific JSON conversion.
-type JSONPBMaybeMarshaler interface {
-	// MaybeMarshalJSONPB is for formatting the proto message as JSON. If the
-	// "handled" result value is false, "b" and "err" are ignored and the default
-	// proto JSON behavior occurs. currIndent is the current prefix depth but
-	// should not be applied if m.Indent is empty.
-	MaybeMarshalJSONPB(m *JSONMarshaler, currIndent string) (handled bool, b []byte, err error)
-}
+// type JSONPBMaybeMarshaler interface {
+// 	// MaybeMarshalJSONPB is for formatting the proto message as JSON. If the
+// 	// "handled" result value is false, "b" and "err" are ignored and the default
+// 	// proto JSON behavior occurs. currIndent is the current prefix depth but
+// 	// should not be applied if m.Indent is empty.
+// 	MaybeMarshalJSONPB(m *JSONMarshaler, currIndent string) (handled bool, b []byte, err error)
+// }
 
 // JSONPBMaybeUnmarshaler is implemented by any proto struct that wants to
 // customize optional Temporal-specific JSON conversion.

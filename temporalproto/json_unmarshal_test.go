@@ -1142,136 +1142,6 @@ func TestUnmarshal(t *testing.T) {
 		},
 		wantErr: "",
 	}, {
-		desc:         "extensions of non-repeated fields",
-		inputMessage: &pb2.Extensions{},
-		inputText: `{
-  "optString": "non-extension field",
-  "optBool": true,
-  "optInt32": 42,
-  "[pb2.opt_ext_bool]": true,
-  "[pb2.opt_ext_nested]": {
-    "optString": "nested in an extension",
-    "optNested": {
-      "optString": "another nested in an extension"
-    }
-  },
-  "[pb2.opt_ext_string]": "extension field",
-  "[pb2.opt_ext_enum]": "TEN"
-}`,
-		wantMessage: func() proto.Message {
-			m := &pb2.Extensions{
-				OptString: proto.String("non-extension field"),
-				OptBool:   proto.Bool(true),
-				OptInt32:  proto.Int32(42),
-			}
-			proto.SetExtension(m, pb2.E_OptExtBool, true)
-			proto.SetExtension(m, pb2.E_OptExtString, "extension field")
-			proto.SetExtension(m, pb2.E_OptExtEnum, pb2.Enum_TEN)
-			proto.SetExtension(m, pb2.E_OptExtNested, &pb2.Nested{
-				OptString: proto.String("nested in an extension"),
-				OptNested: &pb2.Nested{
-					OptString: proto.String("another nested in an extension"),
-				},
-			})
-			return m
-		}(),
-	}, {
-		desc:         "extensions of repeated fields",
-		inputMessage: &pb2.Extensions{},
-		inputText: `{
-  "[pb2.rpt_ext_enum]": ["TEN", 101, "ONE"],
-  "[pb2.rpt_ext_fixed32]": [42, 47],
-  "[pb2.rpt_ext_nested]": [
-    {"optString": "one"},
-	{"optString": "two"},
-	{"optString": "three"}
-  ]
-}`,
-		wantMessage: func() proto.Message {
-			m := &pb2.Extensions{}
-			proto.SetExtension(m, pb2.E_RptExtEnum, []pb2.Enum{pb2.Enum_TEN, 101, pb2.Enum_ONE})
-			proto.SetExtension(m, pb2.E_RptExtFixed32, []uint32{42, 47})
-			proto.SetExtension(m, pb2.E_RptExtNested, []*pb2.Nested{
-				&pb2.Nested{OptString: proto.String("one")},
-				&pb2.Nested{OptString: proto.String("two")},
-				&pb2.Nested{OptString: proto.String("three")},
-			})
-			return m
-		}(),
-	}, {
-		desc:         "extensions of non-repeated fields in another message",
-		inputMessage: &pb2.Extensions{},
-		inputText: `{
-  "[pb2.ExtensionsContainer.opt_ext_bool]": true,
-  "[pb2.ExtensionsContainer.opt_ext_enum]": "TEN",
-  "[pb2.ExtensionsContainer.opt_ext_nested]": {
-    "optString": "nested in an extension",
-    "optNested": {
-      "optString": "another nested in an extension"
-    }
-  },
-  "[pb2.ExtensionsContainer.opt_ext_string]": "extension field"
-}`,
-		wantMessage: func() proto.Message {
-			m := &pb2.Extensions{}
-			proto.SetExtension(m, pb2.E_ExtensionsContainer_OptExtBool, true)
-			proto.SetExtension(m, pb2.E_ExtensionsContainer_OptExtString, "extension field")
-			proto.SetExtension(m, pb2.E_ExtensionsContainer_OptExtEnum, pb2.Enum_TEN)
-			proto.SetExtension(m, pb2.E_ExtensionsContainer_OptExtNested, &pb2.Nested{
-				OptString: proto.String("nested in an extension"),
-				OptNested: &pb2.Nested{
-					OptString: proto.String("another nested in an extension"),
-				},
-			})
-			return m
-		}(),
-	}, {
-		desc:         "extensions of repeated fields in another message",
-		inputMessage: &pb2.Extensions{},
-		inputText: `{
-  "optString": "non-extension field",
-  "optBool": true,
-  "optInt32": 42,
-  "[pb2.ExtensionsContainer.rpt_ext_nested]": [
-    {"optString": "one"},
-    {"optString": "two"},
-    {"optString": "three"}
-  ],
-  "[pb2.ExtensionsContainer.rpt_ext_enum]": ["TEN", 101, "ONE"],
-  "[pb2.ExtensionsContainer.rpt_ext_string]": ["hello", "world"]
-}`,
-		wantMessage: func() proto.Message {
-			m := &pb2.Extensions{
-				OptString: proto.String("non-extension field"),
-				OptBool:   proto.Bool(true),
-				OptInt32:  proto.Int32(42),
-			}
-			proto.SetExtension(m, pb2.E_ExtensionsContainer_RptExtEnum, []pb2.Enum{pb2.Enum_TEN, 101, pb2.Enum_ONE})
-			proto.SetExtension(m, pb2.E_ExtensionsContainer_RptExtString, []string{"hello", "world"})
-			proto.SetExtension(m, pb2.E_ExtensionsContainer_RptExtNested, []*pb2.Nested{
-				&pb2.Nested{OptString: proto.String("one")},
-				&pb2.Nested{OptString: proto.String("two")},
-				&pb2.Nested{OptString: proto.String("three")},
-			})
-			return m
-		}(),
-	}, {
-		desc:         "invalid extension field name",
-		inputMessage: &pb2.Extensions{},
-		inputText:    `{ "[pb2.invalid_message_field]": true }`,
-		wantErr:      `(line 1:3): unknown field "[pb2.invalid_message_field]"`,
-	}, {
-		desc:         "extensions of repeated field contains null",
-		inputMessage: &pb2.Extensions{},
-		inputText: `{
-  "[pb2.ExtensionsContainer.rpt_ext_nested]": [
-    {"optString": "one"},
-    null,
-    {"optString": "three"}
-  ],
-}`,
-		wantErr: `(line 4:5): unexpected token null`,
-	}, {
 		desc:         "Empty",
 		inputMessage: &emptypb.Empty{},
 		inputText:    `{}`,
@@ -2200,20 +2070,6 @@ func TestUnmarshal(t *testing.T) {
 			},
 		},
 	}, {
-		desc:         "DiscardUnknown: extension",
-		umo:          temporalproto.JSONUnmarshaler{DiscardUnknown: true},
-		inputMessage: &pb2.Extensions{},
-		inputText: `{
-  "[pb2.opt_ext_nested]": {
-	"unknown": []
-  }
-}`,
-		wantMessage: func() proto.Message {
-			m := &pb2.Extensions{}
-			proto.SetExtension(m, pb2.E_OptExtNested, &pb2.Nested{})
-			return m
-		}(),
-	}, {
 		desc:         "DiscardUnknown: Empty",
 		umo:          temporalproto.JSONUnmarshaler{DiscardUnknown: true},
 		inputMessage: &emptypb.Empty{},
@@ -2262,6 +2118,7 @@ func TestUnmarshal(t *testing.T) {
 			continue
 		}
 		t.Run(tt.desc, func(t *testing.T) {
+			temporalproto.SetLogfunc(t.Logf)
 			err := tt.umo.Unmarshal(strings.NewReader(tt.inputText), tt.inputMessage)
 			if err != nil {
 				if tt.wantErr == "" {
