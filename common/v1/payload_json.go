@@ -74,7 +74,7 @@ package common
 // // [go.temporal.io/api/internal/temporaljsonpb.JSONPBMaybeUnmarshaler.MaybeUnmarshalJSONPB].
 // //
 // // WARNING: This is internal API and should not be called externally.
-// func (p *Payloads) MaybeUnmarshalJSONPB(u *jsonpb.Unmarshaler, b []byte) (handled bool, err error) {
+// func (p *Payloads) MaybeUnmarshalJSONPB(u jsonpb.Unmarshaler, b []byte) (handled bool, err error) {
 // 	// If this is nil, ignore (should never be)
 // 	if p == nil {
 // 		return false, nil

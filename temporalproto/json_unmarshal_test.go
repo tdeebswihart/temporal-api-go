@@ -10,9 +10,7 @@ import (
 	"testing"
 
 	"google.golang.org/protobuf/proto"
-
-	pb2 "go.temporal.io/api/internal/testprotos/textpb2"
-	pb3 "go.temporal.io/api/internal/testprotos/textpb3"
+	"google.golang.org/protobuf/reflect/protoregistry"
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/emptypb"
@@ -21,13 +19,15 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 
+	pb2 "go.temporal.io/api/internal/protojson/testprotos/textpb2"
+	pb3 "go.temporal.io/api/internal/protojson/testprotos/textpb3"
 	"go.temporal.io/api/temporalproto"
 )
 
 func TestUnmarshal(t *testing.T) {
 	tests := []struct {
 		desc         string
-		umo          temporalproto.JSONUnmarshaler
+		umo          temporalproto.UnmarshalOptions
 		inputMessage proto.Message
 		inputText    string
 		wantMessage  proto.Message
@@ -1036,7 +1036,7 @@ func TestUnmarshal(t *testing.T) {
 		desc:         "required fields not set",
 		inputMessage: &pb2.Requireds{},
 		inputText:    `{}`,
-		wantErr:      "",
+		wantErr:      "required field pb2.Requireds.req_bool not set",
 	}, {
 		desc:         "required field set",
 		inputMessage: &pb2.PartialRequired{},
@@ -1061,7 +1061,23 @@ func TestUnmarshal(t *testing.T) {
 			ReqString:   proto.String("hello"),
 			ReqEnum:     pb2.Enum_ONE.Enum(),
 		},
-		wantErr: "",
+		wantErr: "required field pb2.Requireds.req_double not set",
+	}, {
+		desc:         "required fields partially set with AllowPartial",
+		umo:          temporalproto.UnmarshalOptions{AllowPartial: true},
+		inputMessage: &pb2.Requireds{},
+		inputText: `{
+  "reqBool": false,
+  "reqSfixed64": 42,
+  "reqString": "hello",
+  "reqEnum": "ONE"
+}`,
+		wantMessage: &pb2.Requireds{
+			ReqBool:     proto.Bool(false),
+			ReqSfixed64: proto.Int64(42),
+			ReqString:   proto.String("hello"),
+			ReqEnum:     pb2.Enum_ONE.Enum(),
+		},
 	}, {
 		desc:         "required fields all set",
 		inputMessage: &pb2.Requireds{},
@@ -1090,7 +1106,17 @@ func TestUnmarshal(t *testing.T) {
 		wantMessage: &pb2.IndirectRequired{
 			OptNested: &pb2.NestedWithRequired{},
 		},
-		wantErr: "",
+		wantErr: "required field pb2.NestedWithRequired.req_string not set",
+	}, {
+		desc:         "indirect required field with AllowPartial",
+		umo:          temporalproto.UnmarshalOptions{AllowPartial: true},
+		inputMessage: &pb2.IndirectRequired{},
+		inputText: `{
+  "optNested": {}
+}`,
+		wantMessage: &pb2.IndirectRequired{
+			OptNested: &pb2.NestedWithRequired{},
+		},
 	}, {
 		desc:         "indirect required field in repeated",
 		inputMessage: &pb2.IndirectRequired{},
@@ -1108,7 +1134,25 @@ func TestUnmarshal(t *testing.T) {
 				{},
 			},
 		},
-		wantErr: "",
+		wantErr: "required field pb2.NestedWithRequired.req_string not set",
+	}, {
+		desc:         "indirect required field in repeated with AllowPartial",
+		umo:          temporalproto.UnmarshalOptions{AllowPartial: true},
+		inputMessage: &pb2.IndirectRequired{},
+		inputText: `{
+  "rptNested": [
+    {"reqString": "one"},
+    {}
+  ]
+}`,
+		wantMessage: &pb2.IndirectRequired{
+			RptNested: []*pb2.NestedWithRequired{
+				{
+					ReqString: proto.String("one"),
+				},
+				{},
+			},
+		},
 	}, {
 		desc:         "indirect required field in map",
 		inputMessage: &pb2.IndirectRequired{},
@@ -1128,7 +1172,27 @@ func TestUnmarshal(t *testing.T) {
 				},
 			},
 		},
-		wantErr: "",
+		wantErr: "required field pb2.NestedWithRequired.req_string not set",
+	}, {
+		desc:         "indirect required field in map with AllowPartial",
+		umo:          temporalproto.UnmarshalOptions{AllowPartial: true},
+		inputMessage: &pb2.IndirectRequired{},
+		inputText: `{
+  "strToNested": {
+    "missing": {},
+	"contains": {
+      "reqString": "here"
+    }
+  }
+}`,
+		wantMessage: &pb2.IndirectRequired{
+			StrToNested: map[string]*pb2.NestedWithRequired{
+				"missing": &pb2.NestedWithRequired{},
+				"contains": &pb2.NestedWithRequired{
+					ReqString: proto.String("here"),
+				},
+			},
+		},
 	}, {
 		desc:         "indirect required field in oneof",
 		inputMessage: &pb2.IndirectRequired{},
@@ -1140,7 +1204,149 @@ func TestUnmarshal(t *testing.T) {
 				OneofNested: &pb2.NestedWithRequired{},
 			},
 		},
-		wantErr: "",
+		wantErr: "required field pb2.NestedWithRequired.req_string not set",
+	}, {
+		desc:         "indirect required field in oneof with AllowPartial",
+		umo:          temporalproto.UnmarshalOptions{AllowPartial: true},
+		inputMessage: &pb2.IndirectRequired{},
+		inputText: `{
+  "oneofNested": {}
+}`,
+		wantMessage: &pb2.IndirectRequired{
+			Union: &pb2.IndirectRequired_OneofNested{
+				OneofNested: &pb2.NestedWithRequired{},
+			},
+		},
+	}, {
+		desc:         "extensions of non-repeated fields",
+		inputMessage: &pb2.Extensions{},
+		inputText: `{
+  "optString": "non-extension field",
+  "optBool": true,
+  "optInt32": 42,
+  "[pb2.opt_ext_bool]": true,
+  "[pb2.opt_ext_nested]": {
+    "optString": "nested in an extension",
+    "optNested": {
+      "optString": "another nested in an extension"
+    }
+  },
+  "[pb2.opt_ext_string]": "extension field",
+  "[pb2.opt_ext_enum]": "TEN"
+}`,
+		wantMessage: func() proto.Message {
+			m := &pb2.Extensions{
+				OptString: proto.String("non-extension field"),
+				OptBool:   proto.Bool(true),
+				OptInt32:  proto.Int32(42),
+			}
+			proto.SetExtension(m, pb2.E_OptExtBool, true)
+			proto.SetExtension(m, pb2.E_OptExtString, "extension field")
+			proto.SetExtension(m, pb2.E_OptExtEnum, pb2.Enum_TEN)
+			proto.SetExtension(m, pb2.E_OptExtNested, &pb2.Nested{
+				OptString: proto.String("nested in an extension"),
+				OptNested: &pb2.Nested{
+					OptString: proto.String("another nested in an extension"),
+				},
+			})
+			return m
+		}(),
+	}, {
+		desc:         "extensions of repeated fields",
+		inputMessage: &pb2.Extensions{},
+		inputText: `{
+  "[pb2.rpt_ext_enum]": ["TEN", 101, "ONE"],
+  "[pb2.rpt_ext_fixed32]": [42, 47],
+  "[pb2.rpt_ext_nested]": [
+    {"optString": "one"},
+	{"optString": "two"},
+	{"optString": "three"}
+  ]
+}`,
+		wantMessage: func() proto.Message {
+			m := &pb2.Extensions{}
+			proto.SetExtension(m, pb2.E_RptExtEnum, []pb2.Enum{pb2.Enum_TEN, 101, pb2.Enum_ONE})
+			proto.SetExtension(m, pb2.E_RptExtFixed32, []uint32{42, 47})
+			proto.SetExtension(m, pb2.E_RptExtNested, []*pb2.Nested{
+				&pb2.Nested{OptString: proto.String("one")},
+				&pb2.Nested{OptString: proto.String("two")},
+				&pb2.Nested{OptString: proto.String("three")},
+			})
+			return m
+		}(),
+	}, {
+		desc:         "extensions of non-repeated fields in another message",
+		inputMessage: &pb2.Extensions{},
+		inputText: `{
+  "[pb2.ExtensionsContainer.opt_ext_bool]": true,
+  "[pb2.ExtensionsContainer.opt_ext_enum]": "TEN",
+  "[pb2.ExtensionsContainer.opt_ext_nested]": {
+    "optString": "nested in an extension",
+    "optNested": {
+      "optString": "another nested in an extension"
+    }
+  },
+  "[pb2.ExtensionsContainer.opt_ext_string]": "extension field"
+}`,
+		wantMessage: func() proto.Message {
+			m := &pb2.Extensions{}
+			proto.SetExtension(m, pb2.E_ExtensionsContainer_OptExtBool, true)
+			proto.SetExtension(m, pb2.E_ExtensionsContainer_OptExtString, "extension field")
+			proto.SetExtension(m, pb2.E_ExtensionsContainer_OptExtEnum, pb2.Enum_TEN)
+			proto.SetExtension(m, pb2.E_ExtensionsContainer_OptExtNested, &pb2.Nested{
+				OptString: proto.String("nested in an extension"),
+				OptNested: &pb2.Nested{
+					OptString: proto.String("another nested in an extension"),
+				},
+			})
+			return m
+		}(),
+	}, {
+		desc:         "extensions of repeated fields in another message",
+		inputMessage: &pb2.Extensions{},
+		inputText: `{
+  "optString": "non-extension field",
+  "optBool": true,
+  "optInt32": 42,
+  "[pb2.ExtensionsContainer.rpt_ext_nested]": [
+    {"optString": "one"},
+    {"optString": "two"},
+    {"optString": "three"}
+  ],
+  "[pb2.ExtensionsContainer.rpt_ext_enum]": ["TEN", 101, "ONE"],
+  "[pb2.ExtensionsContainer.rpt_ext_string]": ["hello", "world"]
+}`,
+		wantMessage: func() proto.Message {
+			m := &pb2.Extensions{
+				OptString: proto.String("non-extension field"),
+				OptBool:   proto.Bool(true),
+				OptInt32:  proto.Int32(42),
+			}
+			proto.SetExtension(m, pb2.E_ExtensionsContainer_RptExtEnum, []pb2.Enum{pb2.Enum_TEN, 101, pb2.Enum_ONE})
+			proto.SetExtension(m, pb2.E_ExtensionsContainer_RptExtString, []string{"hello", "world"})
+			proto.SetExtension(m, pb2.E_ExtensionsContainer_RptExtNested, []*pb2.Nested{
+				&pb2.Nested{OptString: proto.String("one")},
+				&pb2.Nested{OptString: proto.String("two")},
+				&pb2.Nested{OptString: proto.String("three")},
+			})
+			return m
+		}(),
+	}, {
+		desc:         "invalid extension field name",
+		inputMessage: &pb2.Extensions{},
+		inputText:    `{ "[pb2.invalid_message_field]": true }`,
+		wantErr:      `(line 1:3): unknown field "[pb2.invalid_message_field]"`,
+	}, {
+		desc:         "extensions of repeated field contains null",
+		inputMessage: &pb2.Extensions{},
+		inputText: `{
+  "[pb2.ExtensionsContainer.rpt_ext_nested]": [
+    {"optString": "one"},
+    null,
+    {"optString": "three"}
+  ],
+}`,
+		wantErr: `(line 4:5): unexpected token null`,
 	}, {
 		desc:         "Empty",
 		inputMessage: &emptypb.Empty{},
@@ -1703,7 +1909,39 @@ func TestUnmarshal(t *testing.T) {
 		inputText:    `{"@type": "foo/pb2.Nested"}`,
 		wantMessage:  &anypb.Any{TypeUrl: "foo/pb2.Nested"},
 	}, {
+		desc:         "Any without registered type",
+		umo:          temporalproto.UnmarshalOptions{Resolver: new(protoregistry.Types)},
+		inputMessage: &anypb.Any{},
+		inputText:    `{"@type": "foo/pb2.Nested"}`,
+		wantErr:      `(line 1:11): unable to resolve "foo/pb2.Nested":`,
+	}, {
 		desc:         "Any with missing required",
+		inputMessage: &anypb.Any{},
+		inputText: `{
+  "@type": "pb2.PartialRequired",
+  "optString": "embedded inside Any"
+}`,
+		wantMessage: func() proto.Message {
+			m := &pb2.PartialRequired{
+				OptString: proto.String("embedded inside Any"),
+			}
+			b, err := proto.MarshalOptions{
+				Deterministic: true,
+				AllowPartial:  true,
+			}.Marshal(m)
+			if err != nil {
+				t.Fatalf("error in binary marshaling message for Any.value: %v", err)
+			}
+			return &anypb.Any{
+				TypeUrl: string(m.ProtoReflect().Descriptor().FullName()),
+				Value:   b,
+			}
+		}(),
+	}, {
+		desc: "Any with partial required and AllowPartial",
+		umo: temporalproto.UnmarshalOptions{
+			AllowPartial: true,
+		},
 		inputMessage: &anypb.Any{},
 		inputText: `{
   "@type": "pb2.PartialRequired",
@@ -1896,7 +2134,7 @@ func TestUnmarshal(t *testing.T) {
 		}(),
 	}, {
 		desc:         "Any with missing @type",
-		umo:          temporalproto.JSONUnmarshaler{},
+		umo:          temporalproto.UnmarshalOptions{},
 		inputMessage: &anypb.Any{},
 		inputText: `{
   "value": {}
@@ -2025,7 +2263,7 @@ func TestUnmarshal(t *testing.T) {
 		},
 	}, {
 		desc:         "DiscardUnknown: regular messages",
-		umo:          temporalproto.JSONUnmarshaler{DiscardUnknown: true},
+		umo:          temporalproto.UnmarshalOptions{DiscardUnknown: true},
 		inputMessage: &pb3.Nests{},
 		inputText: `{
   "sNested": {
@@ -2039,7 +2277,7 @@ func TestUnmarshal(t *testing.T) {
 		wantMessage: &pb3.Nests{SNested: &pb3.Nested{}},
 	}, {
 		desc:         "DiscardUnknown: repeated",
-		umo:          temporalproto.JSONUnmarshaler{DiscardUnknown: true},
+		umo:          temporalproto.UnmarshalOptions{DiscardUnknown: true},
 		inputMessage: &pb2.Nests{},
 		inputText: `{
   "rptNested": [
@@ -2055,7 +2293,7 @@ func TestUnmarshal(t *testing.T) {
 		},
 	}, {
 		desc:         "DiscardUnknown: map",
-		umo:          temporalproto.JSONUnmarshaler{DiscardUnknown: true},
+		umo:          temporalproto.UnmarshalOptions{DiscardUnknown: true},
 		inputMessage: &pb3.Maps{},
 		inputText: `{
   "strToNested": {
@@ -2070,14 +2308,28 @@ func TestUnmarshal(t *testing.T) {
 			},
 		},
 	}, {
+		desc:         "DiscardUnknown: extension",
+		umo:          temporalproto.UnmarshalOptions{DiscardUnknown: true},
+		inputMessage: &pb2.Extensions{},
+		inputText: `{
+  "[pb2.opt_ext_nested]": {
+	"unknown": []
+  }
+}`,
+		wantMessage: func() proto.Message {
+			m := &pb2.Extensions{}
+			proto.SetExtension(m, pb2.E_OptExtNested, &pb2.Nested{})
+			return m
+		}(),
+	}, {
 		desc:         "DiscardUnknown: Empty",
-		umo:          temporalproto.JSONUnmarshaler{DiscardUnknown: true},
+		umo:          temporalproto.UnmarshalOptions{DiscardUnknown: true},
 		inputMessage: &emptypb.Empty{},
 		inputText:    `{"unknown": "something"}`,
 		wantMessage:  &emptypb.Empty{},
 	}, {
 		desc:         "DiscardUnknown: Any without type",
-		umo:          temporalproto.JSONUnmarshaler{DiscardUnknown: true},
+		umo:          temporalproto.UnmarshalOptions{DiscardUnknown: true},
 		inputMessage: &anypb.Any{},
 		inputText: `{
   "value": {"foo": "bar"},
@@ -2086,7 +2338,7 @@ func TestUnmarshal(t *testing.T) {
 		wantMessage: &anypb.Any{},
 	}, {
 		desc: "DiscardUnknown: Any",
-		umo: temporalproto.JSONUnmarshaler{
+		umo: temporalproto.UnmarshalOptions{
 			DiscardUnknown: true,
 		},
 		inputMessage: &anypb.Any{},
@@ -2099,7 +2351,7 @@ func TestUnmarshal(t *testing.T) {
 		},
 	}, {
 		desc: "DiscardUnknown: Any with Empty",
-		umo: temporalproto.JSONUnmarshaler{
+		umo: temporalproto.UnmarshalOptions{
 			DiscardUnknown: true,
 		},
 		inputMessage: &anypb.Any{},
@@ -2110,6 +2362,43 @@ func TestUnmarshal(t *testing.T) {
 		wantMessage: &anypb.Any{
 			TypeUrl: "type.googleapis.com/google.protobuf.Empty",
 		},
+	}, {
+		desc:         "DiscardUnknown: unknown enum name",
+		inputMessage: &pb3.Enums{},
+		inputText: `{
+  "sEnum": "UNNAMED"
+}`,
+		umo:         temporalproto.UnmarshalOptions{DiscardUnknown: true},
+		wantMessage: &pb3.Enums{},
+	}, {
+		desc:         "DiscardUnknown: repeated enum unknown name",
+		inputMessage: &pb2.Enums{},
+		inputText: `{
+  "rptEnum"      : ["TEN", 1, 42, "UNNAMED"]
+}`,
+		umo: temporalproto.UnmarshalOptions{DiscardUnknown: true},
+		wantMessage: &pb2.Enums{
+			RptEnum: []pb2.Enum{pb2.Enum_TEN, pb2.Enum_ONE, 42},
+		},
+	}, {
+		desc:         "DiscardUnknown: enum map value unknown name",
+		inputMessage: &pb3.Maps{},
+		inputText: `{
+  "uint64ToEnum": {
+    "1" : "ONE",
+	"2" : 2,
+	"10": 101,
+	"3": "UNNAMED"
+  }
+}`,
+		umo: temporalproto.UnmarshalOptions{DiscardUnknown: true},
+		wantMessage: &pb3.Maps{
+			Uint64ToEnum: map[uint64]pb3.Enum{
+				1:  pb3.Enum_ONE,
+				2:  pb3.Enum_TWO,
+				10: 101,
+			},
+		},
 	}}
 
 	for _, tt := range tests {
@@ -2118,8 +2407,7 @@ func TestUnmarshal(t *testing.T) {
 			continue
 		}
 		t.Run(tt.desc, func(t *testing.T) {
-			temporalproto.SetLogfunc(t.Logf)
-			err := tt.umo.Unmarshal(strings.NewReader(tt.inputText), tt.inputMessage)
+			err := tt.umo.Unmarshal([]byte(tt.inputText), tt.inputMessage)
 			if err != nil {
 				if tt.wantErr == "" {
 					t.Errorf("Unmarshal() got unexpected error: %v", err)

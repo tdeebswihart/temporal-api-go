@@ -1,621 +1,375 @@
+// Copyright 2019 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
 package temporalproto
 
-// import (
-// 	"bytes"
-// 	"encoding/json"
-// 	"errors"
-// 	"fmt"
-// 	"io"
-// 	"math"
-// 	"reflect"
-// 	"sort"
-// 	"strconv"
-// 	"strings"
-// 	"time"
 //
+// import (
+// 	"encoding/base64"
+// 	"fmt"
+//
+// 	"go.temporal.io/api/internal/protojson/encoding/json"
+// 	"go.temporal.io/api/internal/protojson/encoding/messageset"
+// 	"go.temporal.io/api/internal/protojson/errors"
+// 	"go.temporal.io/api/internal/protojson/filedesc"
+// 	"go.temporal.io/api/internal/protojson/flags"
+// 	"go.temporal.io/api/internal/protojson/genid"
+// 	"go.temporal.io/api/internal/protojson/order"
+// 	"go.temporal.io/api/internal/protojson/pragma"
 // 	"google.golang.org/protobuf/proto"
 // 	"google.golang.org/protobuf/reflect/protoreflect"
+// 	"google.golang.org/protobuf/reflect/protoregistry"
 // )
 //
-// // JSONPBMarshaler is implemented by protobuf messages that customize the
-// // way they are marshaled to JSON. Messages that implement this should
-// // also implement JSONPBUnmarshaler so that the custom format can be
-// // parsed.
-// //
-// // The JSON marshaling must follow the proto to JSON specification:
-// //
-// //	https://developers.google.com/protocol-buffers/docs/proto3#json
-// type JSONPBMarshaler interface {
-// 	MarshalJSONPB(*JSONMarshaler) ([]byte, error)
+// const defaultIndent = "  "
+//
+// // Format formats the message as a multiline string.
+// // This function is only intended for human consumption and ignores errors.
+// // Do not depend on the output being stable. It may change over time across
+// // different versions of the program.
+// func Format(m proto.Message) string {
+// 	return MarshalOptions{Multiline: true}.Format(m)
 // }
 //
-// // JSONMarshaler is a configurable object for converting between
-// // protocol buffer objects and a JSON representation for them.
-// type JSONMarshaler struct {
-// 	// Whether to render enum values as integers, as opposed to string values.
-// 	EnumsAsInts bool
+// // Marshal writes the given [proto.Message] in JSON format using default options.
+// // Do not depend on the output being stable. It may change over time across
+// // different versions of the program.
+// func Marshal(m proto.Message) ([]byte, error) {
+// 	return MarshalOptions{}.Marshal(m)
+// }
 //
-// 	// Whether to render fields with zero values.
-// 	EmitDefaults bool
+// // MarshalOptions is a configurable JSON format marshaler.
+// type MarshalOptions struct {
+// 	pragma.NoUnkeyedLiterals
 //
-// 	// A string to indent each level by. The presence of this field will
-// 	// also cause a space to appear between the field separator and
-// 	// value, and for newlines to be appear between fields and array
-// 	// elements.
+// 	// Multiline specifies whether the marshaler should format the output in
+// 	// indented-form with every textual element on a new line.
+// 	// If Indent is an empty string, then an arbitrary indent is chosen.
+// 	Multiline bool
+//
+// 	// Indent specifies the set of indentation characters to use in a multiline
+// 	// formatted output such that every entry is preceded by Indent and
+// 	// terminated by a newline. If non-empty, then Multiline is treated as true.
+// 	// Indent can only be composed of space or tab characters.
 // 	Indent string
 //
-// 	// Whether to use the original (.proto) name for fields.
-// 	OrigName bool
+// 	// AllowPartial allows messages that have missing required fields to marshal
+// 	// without returning an error. If AllowPartial is false (the default),
+// 	// Marshal will return error if there are any missing required fields.
+// 	AllowPartial bool
+//
+// 	// UseProtoNames uses proto field name instead of lowerCamelCase name in JSON
+// 	// field names.
+// 	UseProtoNames bool
+//
+// 	// UseEnumNumbers emits enum values as numbers.
+// 	UseEnumNumbers bool
+//
+// 	// EmitUnpopulated specifies whether to emit unpopulated fields. It does not
+// 	// emit unpopulated oneof fields or unpopulated extension fields.
+// 	// The JSON value emitted for unpopulated fields are as follows:
+// 	//  ╔═══════╤════════════════════════════╗
+// 	//  ║ JSON  │ Protobuf field             ║
+// 	//  ╠═══════╪════════════════════════════╣
+// 	//  ║ false │ proto3 boolean fields      ║
+// 	//  ║ 0     │ proto3 numeric fields      ║
+// 	//  ║ ""    │ proto3 string/bytes fields ║
+// 	//  ║ null  │ proto2 scalar fields       ║
+// 	//  ║ null  │ message fields             ║
+// 	//  ║ []    │ list fields                ║
+// 	//  ║ {}    │ map fields                 ║
+// 	//  ╚═══════╧════════════════════════════╝
+// 	EmitUnpopulated bool
+//
+// 	// EmitDefaultValues specifies whether to emit default-valued primitive fields,
+// 	// empty lists, and empty maps. The fields affected are as follows:
+// 	//  ╔═══════╤════════════════════════════════════════╗
+// 	//  ║ JSON  │ Protobuf field                         ║
+// 	//  ╠═══════╪════════════════════════════════════════╣
+// 	//  ║ false │ non-optional scalar boolean fields     ║
+// 	//  ║ 0     │ non-optional scalar numeric fields     ║
+// 	//  ║ ""    │ non-optional scalar string/byte fields ║
+// 	//  ║ []    │ empty repeated fields                  ║
+// 	//  ║ {}    │ empty map fields                       ║
+// 	//  ╚═══════╧════════════════════════════════════════╝
+// 	//
+// 	// Behaves similarly to EmitUnpopulated, but does not emit "null"-value fields,
+// 	// i.e. presence-sensing fields that are omitted will remain omitted to preserve
+// 	// presence-sensing.
+// 	// EmitUnpopulated takes precedence over EmitDefaultValues since the former generates
+// 	// a strict superset of the latter.
+// 	EmitDefaultValues bool
+//
+// 	// Resolver is used for looking up types when expanding google.protobuf.Any
+// 	// messages. If nil, this defaults to using protoregistry.GlobalTypes.
+// 	Resolver interface {
+// 		protoregistry.ExtensionTypeResolver
+// 		protoregistry.MessageTypeResolver
+// 	}
 // }
 //
-// // Marshal marshals a protocol buffer into JSON.
-// func (m *JSONMarshaler) Marshal(out io.Writer, pb proto.Message) error {
-// 	v := reflect.ValueOf(pb)
-// 	if pb == nil || (v.Kind() == reflect.Ptr && v.IsNil()) {
-// 		return errors.New("Marshal called with nil")
+// // Format formats the message as a string.
+// // This method is only intended for human consumption and ignores errors.
+// // Do not depend on the output being stable. It may change over time across
+// // different versions of the program.
+// func (o MarshalOptions) Format(m proto.Message) string {
+// 	if m == nil || !m.ProtoReflect().IsValid() {
+// 		return "<nil>" // invalid syntax, but okay since this is for debugging
 // 	}
-// 	// Check for unset required fields first.
-// 	if err := proto.CheckInitialized(pb); err != nil {
-// 		return err
-// 	}
-// 	writer := &errWriter{writer: out}
-// 	return m.marshalObject(writer, pb, "", "")
+// 	o.AllowPartial = true
+// 	b, _ := o.Marshal(m)
+// 	return string(b)
 // }
 //
-// // MarshalToString converts a protocol buffer object to JSON string.
-// func (m *JSONMarshaler) MarshalToString(pb proto.Message) (string, error) {
-// 	var buf bytes.Buffer
-// 	if err := m.Marshal(&buf, pb); err != nil {
-// 		return "", err
-// 	}
-// 	return buf.String(), nil
+// // Marshal marshals the given [proto.Message] in the JSON format using options in
+// // MarshalOptions. Do not depend on the output being stable. It may change over
+// // time across different versions of the program.
+// func (o MarshalOptions) Marshal(m proto.Message) ([]byte, error) {
+// 	return o.marshal(nil, m)
 // }
 //
-// // marshalObject writes a struct to the Writer.
-// func (m *JSONMarshaler) marshalObject(out *errWriter, v proto.Message, indent, typeURL string) error {
-// 	if jsm, ok := v.(JSONPBMarshaler); ok {
-// 		b, err := jsm.MarshalJSONPB(m)
-// 		if err != nil {
-// 			return err
-// 		}
-// 		if typeURL != "" {
-// 			// we are marshaling this object to an Any type
-// 			var js map[string]*json.RawMessage
-// 			if err = json.Unmarshal(b, &js); err != nil {
-// 				return fmt.Errorf("type %T produced invalid JSON: %v", v, err)
-// 			}
-// 			turl, err := json.Marshal(typeURL)
-// 			if err != nil {
-// 				return fmt.Errorf("failed to marshal type URL %q to JSON: %v", typeURL, err)
-// 			}
-// 			js["@type"] = (*json.RawMessage)(&turl)
-// 			if m.Indent != "" {
-// 				b, err = json.MarshalIndent(js, indent, m.Indent)
-// 			} else {
-// 				b, err = json.Marshal(js)
-// 			}
-// 			if err != nil {
-// 				return err
-// 			}
-// 		}
+// // MarshalAppend appends the JSON format encoding of m to b,
+// // returning the result.
+// func (o MarshalOptions) MarshalAppend(b []byte, m proto.Message) ([]byte, error) {
+// 	return o.marshal(b, m)
+// }
 //
-// 		out.write(string(b))
-// 		return out.err
+// // marshal is a centralized function that all marshal operations go through.
+// // For profiling purposes, avoid changing the name of this function or
+// // introducing other code paths for marshal that do not go through this.
+// func (o MarshalOptions) marshal(b []byte, m proto.Message) ([]byte, error) {
+// 	if o.Multiline && o.Indent == "" {
+// 		o.Indent = defaultIndent
+// 	}
+// 	if o.Resolver == nil {
+// 		o.Resolver = protoregistry.GlobalTypes
 // 	}
 //
-// 	if jsm, ok := v.(JSONPBMaybeMarshaler); ok {
-// 		if handled, b, err := jsm.MaybeMarshalJSONPB(m, indent); handled && err != nil {
-// 			return err
-// 		} else if handled {
-// 			out.write(string(b))
-// 			return out.err
-// 		}
+// 	internalEnc, err := json.NewEncoder(b, o.Indent)
+// 	if err != nil {
+// 		return nil, err
 // 	}
 //
-// 	s := reflect.ValueOf(v).Elem()
-//
-// 	// Handle well-known types.
-// 	// NOTE: currently disabled.
-// 	if wkt, ok := v.(isWkt); ok {
-// 		switch wkt.XXX_WellKnownType() {
-// 		case "DoubleValue", "FloatValue", "Int64Value", "UInt64Value",
-// 			"Int32Value", "UInt32Value", "BoolValue", "StringValue", "BytesValue":
-// 			// "Wrappers use the same representation in JSON
-// 			//  as the wrapped primitive type, ..."
-// 			sprop := v.ProtoReflect().Descriptor()
-// 			return m.marshalValue(out, sprop.Fields().Get(0), s.Field(0), indent)
-// 		case "Any":
-// 			// Any is a bit more involved.
-// 			return m.marshalAny(out, v, indent)
-// 		case "Duration":
-// 			s, ns := s.Field(0).Int(), s.Field(1).Int()
-// 			if s < -maxSecondsInDuration || s > maxSecondsInDuration {
-// 				return fmt.Errorf("seconds out of range %v", s)
-// 			}
-// 			if ns <= -secondInNanos || ns >= secondInNanos {
-// 				return fmt.Errorf("ns out of range (%v, %v)", -secondInNanos, secondInNanos)
-// 			}
-// 			if (s > 0 && ns < 0) || (s < 0 && ns > 0) {
-// 				return errors.New("signs of seconds and nanos do not match")
-// 			}
-// 			// Generated output always contains 0, 3, 6, or 9 fractional digits,
-// 			// depending on required precision, followed by the suffix "s".
-// 			f := "%d.%09d"
-// 			if ns < 0 {
-// 				ns = -ns
-// 				if s == 0 {
-// 					f = "-%d.%09d"
-// 				}
-// 			}
-// 			x := fmt.Sprintf(f, s, ns)
-// 			x = strings.TrimSuffix(x, "000")
-// 			x = strings.TrimSuffix(x, "000")
-// 			x = strings.TrimSuffix(x, ".000")
-// 			out.write(`"`)
-// 			out.write(x)
-// 			out.write(`s"`)
-// 			return out.err
-// 		case "Struct", "ListValue":
-// 			// Let marshalValue handle the `Struct.fields` map or the `ListValue.values` slice.
-// 			// TODO: pass the correct Properties if needed.
-// 			return m.marshalValue(out, nil, s.Field(0), indent)
-// 		case "Timestamp":
-// 			// "RFC 3339, where generated output will always be Z-normalized
-// 			//  and uses 0, 3, 6 or 9 fractional digits."
-// 			s, ns := s.Field(0).Int(), s.Field(1).Int()
-// 			if ns < 0 || ns >= secondInNanos {
-// 				return fmt.Errorf("ns out of range [0, %v)", secondInNanos)
-// 			}
-// 			t := time.Unix(s, ns).UTC()
-// 			// time.RFC3339Nano isn't exactly right (we need to get 3/6/9 fractional digits).
-// 			x := t.Format("2006-01-02T15:04:05.000000000")
-// 			x = strings.TrimSuffix(x, "000")
-// 			x = strings.TrimSuffix(x, "000")
-// 			x = strings.TrimSuffix(x, ".000")
-// 			out.write(`"`)
-// 			out.write(x)
-// 			out.write(`Z"`)
-// 			return out.err
-// 		case "Value":
-// 			// Value has a single oneof.
-// 			kind := s.Field(0)
-// 			if kind.IsNil() {
-// 				// "absence of any variant indicates an error"
-// 				return errors.New("nil Value")
-// 			}
-// 			// oneof -> *T -> T -> T.F
-// 			x := kind.Elem().Elem().Field(0)
-// 			// TODO: pass the correct Properties if needed.
-// 			return m.marshalValue(out, nil, x, indent)
-// 		}
+// 	// Treat nil message interface as an empty message,
+// 	// in which case the output in an empty JSON object.
+// 	if m == nil {
+// 		return append(b, '{', '}'), nil
 // 	}
 //
-// 	out.write("{")
-// 	if m.Indent != "" {
-// 		out.write("\n")
+// 	enc := encoder{internalEnc, o}
+// 	if err := enc.marshalMessage(m.ProtoReflect(), ""); err != nil {
+// 		return nil, err
 // 	}
-//
-// 	firstField := true
-//
-// 	if typeURL != "" {
-// 		if err := m.marshalTypeURL(out, indent, typeURL); err != nil {
-// 			return err
-// 		}
-// 		firstField = false
+// 	if o.AllowPartial {
+// 		return enc.Bytes(), nil
 // 	}
+// 	return enc.Bytes(), proto.CheckInitialized(m)
+// }
 //
-// 	sprop := v.ProtoReflect().Descriptor()
-// 	fields := sprop.Fields()
-// 	for i := 0; i < s.NumField(); i++ {
-// 		value := s.Field(i)
-// 		valueField := s.Type().Field(i)
+// type encoder struct {
+// 	*json.Encoder
+// 	opts MarshalOptions
+// }
 //
-// 		//this is not a protobuf field
-// 		if valueField.Tag.Get("protobuf") == "" && valueField.Tag.Get("protobuf_oneof") == "" {
-// 			continue
+// // typeFieldDesc is a synthetic field descriptor used for the "@type" field.
+// var typeFieldDesc = func() protoreflect.FieldDescriptor {
+// 	var fd filedesc.Field
+// 	fd.L0.FullName = "@type"
+// 	fd.L0.Index = -1
+// 	fd.L1.Cardinality = protoreflect.Optional
+// 	fd.L1.Kind = protoreflect.StringKind
+// 	return &fd
+// }()
+//
+// // typeURLFieldRanger wraps a protoreflect.Message and modifies its Range method
+// // to additionally iterate over a synthetic field for the type URL.
+// type typeURLFieldRanger struct {
+// 	order.FieldRanger
+// 	typeURL string
+// }
+//
+// func (m typeURLFieldRanger) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
+// 	if !f(typeFieldDesc, protoreflect.ValueOfString(m.typeURL)) {
+// 		return
+// 	}
+// 	m.FieldRanger.Range(f)
+// }
+//
+// // unpopulatedFieldRanger wraps a protoreflect.Message and modifies its Range
+// // method to additionally iterate over unpopulated fields.
+// type unpopulatedFieldRanger struct {
+// 	protoreflect.Message
+//
+// 	skipNull bool
+// }
+//
+// func (m unpopulatedFieldRanger) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
+// 	fds := m.Descriptor().Fields()
+// 	for i := 0; i < fds.Len(); i++ {
+// 		fd := fds.Get(i)
+// 		if m.Has(fd) || fd.ContainingOneof() != nil {
+// 			continue // ignore populated fields and fields within a oneofs
 // 		}
 //
-// 		// IsNil will panic on most value kinds.
-// 		switch value.Kind() {
-// 		case reflect.Chan, reflect.Func, reflect.Interface:
-// 			if value.IsNil() {
+// 		v := m.Get(fd)
+// 		isProto2Scalar := fd.Syntax() == protoreflect.Proto2 && fd.Default().IsValid()
+// 		isSingularMessage := fd.Cardinality() != protoreflect.Repeated && fd.Message() != nil
+// 		if isProto2Scalar || isSingularMessage {
+// 			if m.skipNull {
 // 				continue
 // 			}
+// 			v = protoreflect.Value{} // use invalid value to emit null
 // 		}
-// 		if !m.EmitDefaults {
-// 			switch value.Kind() {
-// 			case reflect.Bool:
-// 				if !value.Bool() {
-// 					continue
-// 				}
-// 			case reflect.Int32, reflect.Int64:
-// 				if value.Int() == 0 {
-// 					continue
-// 				}
-// 			case reflect.Uint32, reflect.Uint64:
-// 				if value.Uint() == 0 {
-// 					continue
-// 				}
-// 			case reflect.Float32, reflect.Float64:
-// 				if value.Float() == 0 {
-// 					continue
-// 				}
-// 			case reflect.String:
-// 				if value.Len() == 0 {
-// 					continue
-// 				}
-// 			case reflect.Map, reflect.Ptr, reflect.Slice:
-// 				if value.IsNil() {
-// 					continue
-// 				}
+// 		if !f(fd, v) {
+// 			return
+// 		}
+// 	}
+// 	m.Message.Range(f)
+// }
+//
+// // marshalMessage marshals the fields in the given protoreflect.Message.
+// // If the typeURL is non-empty, then a synthetic "@type" field is injected
+// // containing the URL as the value.
+// func (e encoder) marshalMessage(m protoreflect.Message, typeURL string) error {
+// 	if marshal := wellKnownTypeMarshaler(m.Descriptor().FullName()); marshal != nil {
+// 		return marshal(e, m)
+// 	}
+//
+// 	e.StartObject()
+// 	defer e.EndObject()
+//
+// 	var fields order.FieldRanger = m
+// 	switch {
+// 	case e.opts.EmitUnpopulated:
+// 		fields = unpopulatedFieldRanger{Message: m, skipNull: false}
+// 	case e.opts.EmitDefaultValues:
+// 		fields = unpopulatedFieldRanger{Message: m, skipNull: true}
+// 	}
+// 	if typeURL != "" {
+// 		fields = typeURLFieldRanger{fields, typeURL}
+// 	}
+//
+// 	var err error
+// 	order.RangeFields(fields, order.IndexNameFieldOrder, func(fd protoreflect.FieldDescriptor, v protoreflect.Value) bool {
+// 		name := fd.JSONName()
+// 		if e.opts.UseProtoNames {
+// 			name = fd.TextName()
+// 		}
+//
+// 		if err = e.WriteName(name); err != nil {
+// 			return false
+// 		}
+// 		if err = e.marshalValue(v, fd); err != nil {
+// 			return false
+// 		}
+// 		return true
+// 	})
+// 	return err
+// }
+//
+// // marshalValue marshals the given protoreflect.Value.
+// func (e encoder) marshalValue(val protoreflect.Value, fd protoreflect.FieldDescriptor) error {
+// 	switch {
+// 	case fd.IsList():
+// 		return e.marshalList(val.List(), fd)
+// 	case fd.IsMap():
+// 		return e.marshalMap(val.Map(), fd)
+// 	default:
+// 		return e.marshalSingular(val, fd)
+// 	}
+// }
+//
+// // marshalSingular marshals the given non-repeated field value. This includes
+// // all scalar types, enums, messages, and groups.
+// func (e encoder) marshalSingular(val protoreflect.Value, fd protoreflect.FieldDescriptor) error {
+// 	if !val.IsValid() {
+// 		e.WriteNull()
+// 		return nil
+// 	}
+//
+// 	switch kind := fd.Kind(); kind {
+// 	case protoreflect.BoolKind:
+// 		e.WriteBool(val.Bool())
+//
+// 	case protoreflect.StringKind:
+// 		if e.WriteString(val.String()) != nil {
+// 			return errors.InvalidUTF8(string(fd.FullName()))
+// 		}
+//
+// 	case protoreflect.Int32Kind, protoreflect.Sint32Kind, protoreflect.Sfixed32Kind:
+// 		e.WriteInt(val.Int())
+//
+// 	case protoreflect.Uint32Kind, protoreflect.Fixed32Kind:
+// 		e.WriteUint(val.Uint())
+//
+// 	case protoreflect.Int64Kind, protoreflect.Sint64Kind, protoreflect.Uint64Kind,
+// 		protoreflect.Sfixed64Kind, protoreflect.Fixed64Kind:
+// 		// 64-bit integers are written out as JSON string.
+// 		e.WriteString(val.String())
+//
+// 	case protoreflect.FloatKind:
+// 		// Encoder.WriteFloat handles the special numbers NaN and infinites.
+// 		e.WriteFloat(val.Float(), 32)
+//
+// 	case protoreflect.DoubleKind:
+// 		// Encoder.WriteFloat handles the special numbers NaN and infinites.
+// 		e.WriteFloat(val.Float(), 64)
+//
+// 	case protoreflect.BytesKind:
+// 		e.WriteString(base64.StdEncoding.EncodeToString(val.Bytes()))
+//
+// 	case protoreflect.EnumKind:
+// 		if fd.Enum().FullName() == genid.NullValue_enum_fullname {
+// 			e.WriteNull()
+// 		} else {
+// 			desc := fd.Enum().Values().ByNumber(val.Enum())
+// 			if e.opts.UseEnumNumbers || desc == nil {
+// 				e.WriteInt(int64(val.Enum()))
+// 			} else {
+// 				e.WriteString(string(desc.Name()))
 // 			}
 // 		}
 //
-// 		// Oneof fields need special handling.
-// 		if valueField.Tag.Get("protobuf_oneof") != "" {
-// 			// value is an interface containing &T{real_value}.
-// 			sv := value.Elem().Elem() // interface -> *T -> T
-// 			value = sv.Field(0)
-// 			valueField = sv.Type().Field(0)
-// 		}
-// 		if !firstField {
-// 			m.writeSep(out)
-// 		}
-// 		if err := m.marshalField(out, fields.Get(i), value, indent); err != nil {
+// 	case protoreflect.MessageKind, protoreflect.GroupKind:
+// 		if err := e.marshalMessage(val.Message(), ""); err != nil {
 // 			return err
 // 		}
-// 		firstField = false
-// 	}
 //
-// 	if m.Indent != "" {
-// 		out.write("\n")
-// 		out.write(indent)
-// 	}
-// 	out.write("}")
-// 	return out.err
-// }
-//
-// func (m *JSONMarshaler) writeSep(out *errWriter) {
-// 	if m.Indent != "" {
-// 		out.write(",\n")
-// 	} else {
-// 		out.write(",")
-// 	}
-// }
-//
-// func (m *JSONMarshaler) marshalAny(out *errWriter, any proto.Message, indent string) error {
-// 	// "If the Any contains a value that has a special JSON mapping,
-// 	//  it will be converted as follows: {"@type": xxx, "value": yyy}.
-// 	//  Otherwise, the value will be converted into a JSON object,
-// 	//  and the "@type" field will be inserted to indicate the actual data type."
-// 	v := reflect.ValueOf(any).Elem()
-// 	turl := v.Field(0).String()
-// 	val := v.Field(1).Bytes()
-//
-// 	msg, err := resolveType(turl)
-// 	if err != nil {
-// 		return err
-// 	}
-//
-// 	if err := proto.Unmarshal(val, msg); err != nil {
-// 		return err
-// 	}
-//
-// 	if _, ok := msg.(isWkt); ok {
-// 		out.write("{")
-// 		if m.Indent != "" {
-// 			out.write("\n")
-// 		}
-// 		if err := m.marshalTypeURL(out, indent, turl); err != nil {
-// 			return err
-// 		}
-// 		m.writeSep(out)
-// 		if m.Indent != "" {
-// 			out.write(indent)
-// 			out.write(m.Indent)
-// 			out.write(`"value": `)
-// 		} else {
-// 			out.write(`"value":`)
-// 		}
-// 		if err := m.marshalObject(out, msg, indent+m.Indent, ""); err != nil {
-// 			return err
-// 		}
-// 		if m.Indent != "" {
-// 			out.write("\n")
-// 			out.write(indent)
-// 		}
-// 		out.write("}")
-// 		return out.err
-// 	}
-//
-// 	return m.marshalObject(out, msg, indent, turl)
-// }
-//
-// func (m *JSONMarshaler) marshalTypeURL(out *errWriter, indent, typeURL string) error {
-// 	if m.Indent != "" {
-// 		out.write(indent)
-// 		out.write(m.Indent)
-// 	}
-// 	out.write(`"@type":`)
-// 	if m.Indent != "" {
-// 		out.write(" ")
-// 	}
-// 	b, err := json.Marshal(typeURL)
-// 	if err != nil {
-// 		return err
-// 	}
-// 	out.write(string(b))
-// 	return out.err
-// }
-//
-// // marshalField writes field description and value to the Writer.
-// func (m *JSONMarshaler) marshalField(out *errWriter, prop protoreflect.FieldDescriptor, v reflect.Value, indent string) error {
-// 	if m.Indent != "" {
-// 		out.write(indent)
-// 		out.write(m.Indent)
-// 	}
-// 	out.write(`"`)
-// 	if m.OrigName || prop.JSONName() == "" {
-// 		out.write(prop.TextName())
-// 	} else {
-// 		out.write(prop.JSONName())
-// 	}
-// 	out.write(`":`)
-// 	if m.Indent != "" {
-// 		out.write(" ")
-// 	}
-// 	if err := m.marshalValue(out, prop, v, indent); err != nil {
-// 		return err
+// 	default:
+// 		panic(fmt.Sprintf("%v has unknown kind: %v", fd.FullName(), kind))
 // 	}
 // 	return nil
 // }
 //
-// // marshalValue writes the value to the Writer.
-// func (m *JSONMarshaler) marshalValue(out *errWriter, prop protoreflect.FieldDescriptor, v reflect.Value, indent string) error {
+// // marshalList marshals the given protoreflect.List.
+// func (e encoder) marshalList(list protoreflect.List, fd protoreflect.FieldDescriptor) error {
+// 	e.StartArray()
+// 	defer e.EndArray()
 //
-// 	v = reflect.Indirect(v)
-//
-// 	// Handle nil pointer
-// 	if v.Kind() == reflect.Invalid {
-// 		out.write("null")
-// 		return out.err
-// 	}
-//
-// 	// Handle repeated elements.
-// 	if v.Kind() == reflect.Slice && v.Type().Elem().Kind() != reflect.Uint8 {
-// 		out.write("[")
-// 		comma := ""
-// 		for i := 0; i < v.Len(); i++ {
-// 			sliceVal := v.Index(i)
-// 			out.write(comma)
-// 			if m.Indent != "" {
-// 				out.write("\n")
-// 				out.write(indent)
-// 				out.write(m.Indent)
-// 				out.write(m.Indent)
-// 			}
-// 			if err := m.marshalValue(out, prop, sliceVal, indent+m.Indent); err != nil {
-// 				return err
-// 			}
-// 			comma = ","
-// 		}
-// 		if m.Indent != "" {
-// 			out.write("\n")
-// 			out.write(indent)
-// 			out.write(m.Indent)
-// 		}
-// 		out.write("]")
-// 		return out.err
-// 	}
-//
-// 	// Handle well-known types.
-// 	// Most are handled up in marshalObject (because 99% are messages).
-// 	if v.Type().Implements(wktType) {
-// 		wkt := v.Interface().(isWkt)
-// 		switch wkt.XXX_WellKnownType() {
-// 		case "NullValue":
-// 			out.write("null")
-// 			return out.err
+// 	for i := 0; i < list.Len(); i++ {
+// 		item := list.Get(i)
+// 		if err := e.marshalSingular(item, fd); err != nil {
+// 			return err
 // 		}
 // 	}
-//
-// 	// Handle enumerations.
-// 	if !m.EnumsAsInts && prop.Kind() == protoreflect.EnumKind {
-// 		// Unknown enum values will are stringified by the proto library as their
-// 		// value. Such values should _not_ be quoted or they will be interpreted
-// 		// as an enum string instead of their value.
-// 		enumStr := v.Interface().(fmt.Stringer).String()
-// 		var valStr string
-// 		if v.Kind() == reflect.Ptr {
-// 			valStr = strconv.Itoa(int(v.Elem().Int()))
-// 		} else {
-// 			valStr = strconv.Itoa(int(v.Int()))
-// 		}
-//
-// 		if m, ok := v.Interface().(interface {
-// 			MarshalJSON() ([]byte, error)
-// 		}); ok {
-// 			data, err := m.MarshalJSON()
-// 			if err != nil {
-// 				return err
-// 			}
-// 			enumStr = string(data)
-// 			enumStr, err = strconv.Unquote(enumStr)
-// 			if err != nil {
-// 				return err
-// 			}
-// 		}
-//
-// 		isKnownEnum := enumStr != valStr
-//
-// 		if isKnownEnum {
-// 			out.write(`"`)
-// 		}
-// 		out.write(enumStr)
-// 		if isKnownEnum {
-// 			out.write(`"`)
-// 		}
-// 		return out.err
-// 	}
-//
-// 	// Handle nested messages.
-// 	if v.Kind() == reflect.Struct {
-// 		i := v
-// 		if v.CanAddr() {
-// 			i = v.Addr()
-// 		} else {
-// 			i = reflect.New(v.Type())
-// 			i.Elem().Set(v)
-// 		}
-// 		iface := i.Interface()
-// 		if iface == nil {
-// 			out.write(`null`)
-// 			return out.err
-// 		}
-//
-// 		if m, ok := v.Interface().(interface {
-// 			MarshalJSON() ([]byte, error)
-// 		}); ok {
-// 			data, err := m.MarshalJSON()
-// 			if err != nil {
-// 				return err
-// 			}
-// 			out.write(string(data))
-// 			return nil
-// 		}
-//
-// 		pm, ok := iface.(proto.Message)
-// 		if !ok {
-// 			return fmt.Errorf("%v does not implement proto.Message", v.Type())
-// 		}
-// 		return m.marshalObject(out, pm, indent+m.Indent, "")
-// 	}
-//
-// 	// Handle maps.
-// 	// Since Go randomizes map iteration, we sort keys for stable output.
-// 	if v.Kind() == reflect.Map {
-// 		out.write(`{`)
-// 		keys := v.MapKeys()
-// 		sort.Sort(mapKeys(keys))
-// 		for i, k := range keys {
-// 			if i > 0 {
-// 				out.write(`,`)
-// 			}
-// 			if m.Indent != "" {
-// 				out.write("\n")
-// 				out.write(indent)
-// 				out.write(m.Indent)
-// 				out.write(m.Indent)
-// 			}
-//
-// 			// TODO handle map key prop properly
-// 			b, err := json.Marshal(k.Interface())
-// 			if err != nil {
-// 				return err
-// 			}
-// 			s := string(b)
-//
-// 			// If the JSON is not a string value, encode it again to make it one.
-// 			if !strings.HasPrefix(s, `"`) {
-// 				b, err := json.Marshal(s)
-// 				if err != nil {
-// 					return err
-// 				}
-// 				s = string(b)
-// 			}
-//
-// 			out.write(s)
-// 			out.write(`:`)
-// 			if m.Indent != "" {
-// 				out.write(` `)
-// 			}
-//
-// 			vprop := prop
-// 			// TODO?
-// 			// if prop != nil && prop.MapValue() != nil {
-// 			// 	vprop = prop.MapValue()
-// 			// }
-// 			if err := m.marshalValue(out, vprop, v.MapIndex(k), indent+m.Indent); err != nil {
-// 				return err
-// 			}
-// 		}
-// 		if m.Indent != "" {
-// 			out.write("\n")
-// 			out.write(indent)
-// 			out.write(m.Indent)
-// 		}
-// 		out.write(`}`)
-// 		return out.err
-// 	}
-//
-// 	// Handle non-finite floats, e.g. NaN, Infinity and -Infinity.
-// 	if v.Kind() == reflect.Float32 || v.Kind() == reflect.Float64 {
-// 		f := v.Float()
-// 		var sval string
-// 		switch {
-// 		case math.IsInf(f, 1):
-// 			sval = `"Infinity"`
-// 		case math.IsInf(f, -1):
-// 			sval = `"-Infinity"`
-// 		case math.IsNaN(f):
-// 			sval = `"NaN"`
-// 		}
-// 		if sval != "" {
-// 			out.write(sval)
-// 			return out.err
-// 		}
-// 	}
-//
-// 	// Default handling defers to the encoding/json library.
-// 	b, err := json.Marshal(v.Interface())
-// 	if err != nil {
-// 		return err
-// 	}
-// 	needToQuote := string(b[0]) != `"` && (v.Kind() == reflect.Int64 || v.Kind() == reflect.Uint64)
-// 	if needToQuote {
-// 		out.write(`"`)
-// 	}
-// 	out.write(string(b))
-// 	if needToQuote {
-// 		out.write(`"`)
-// 	}
-// 	return out.err
+// 	return nil
 // }
 //
-// // Map fields may have key types of non-float scalars, strings and enums.
-// // The easiest way to sort them in some deterministic order is to use fmt.
-// // If this turns out to be inefficient we can always consider other options,
-// // such as doing a Schwartzian transform.
-// //
-// // Numeric keys are sorted in numeric order per
-// // https://developers.google.com/protocol-buffers/docs/proto#maps.
-// type mapKeys []reflect.Value
+// // marshalMap marshals given protoreflect.Map.
+// func (e encoder) marshalMap(mmap protoreflect.Map, fd protoreflect.FieldDescriptor) error {
+// 	e.StartObject()
+// 	defer e.EndObject()
 //
-// func (s mapKeys) Len() int      { return len(s) }
-// func (s mapKeys) Swap(i, j int) { s[i], s[j] = s[j], s[i] }
-// func (s mapKeys) Less(i, j int) bool {
-// 	if k := s[i].Kind(); k == s[j].Kind() {
-// 		switch k {
-// 		case reflect.String:
-// 			return s[i].String() < s[j].String()
-// 		case reflect.Int32, reflect.Int64:
-// 			return s[i].Int() < s[j].Int()
-// 		case reflect.Uint32, reflect.Uint64:
-// 			return s[i].Uint() < s[j].Uint()
+// 	var err error
+// 	order.RangeEntries(mmap, order.GenericKeyOrder, func(k protoreflect.MapKey, v protoreflect.Value) bool {
+// 		if err = e.WriteName(k.String()); err != nil {
+// 			return false
 // 		}
-// 	}
-// 	return fmt.Sprint(s[i].Interface()) < fmt.Sprint(s[j].Interface())
-// }
-
-// // Writer wrapper inspired by https://blog.golang.org/errors-are-values
-// type errWriter struct {
-// 	writer io.Writer
-// 	err    error
-// }
-//
-// func (w *errWriter) write(str string) {
-// 	if w.err != nil {
-// 		return
-// 	}
-// 	_, w.err = w.writer.Write([]byte(str))
+// 		if err = e.marshalSingular(v, fd.MapValue()); err != nil {
+// 			return false
+// 		}
+// 		return true
+// 	})
+// 	return err
 // }
