@@ -21,22 +21,14 @@ import (
 	"go.temporal.io/api/internal/protojson/set"
 )
 
-var logfunc func(string, ...any) = func(msg string, args ...any) {
-	fmt.Printf(msg, args...)
-}
-
-func SetLogfunc(l func(string, ...any)) {
-	logfunc = l
-}
-
-// Unmarshal reads the given []byte into the given [proto.Message].
+// UnmarshalJSON reads the given []byte into the given [proto.Message].
 // The provided message must be mutable (e.g., a non-nil pointer to a message).
-func Unmarshal(b []byte, m proto.Message) error {
-	return UnmarshalOptions{}.Unmarshal(b, m)
+func UnmarshalJSON(b []byte, m proto.Message) error {
+	return JSONUnmarshalOptions{}.Unmarshal(b, m)
 }
 
-// UnmarshalOptions is a configurable JSON format parser.
-type UnmarshalOptions struct {
+// JSONUnmarshalOptions is a configurable JSON format parser.
+type JSONUnmarshalOptions struct {
 	// If AllowPartial is set, input for messages that will result in missing
 	// required fields will not return an error.
 	AllowPartial bool
@@ -62,14 +54,14 @@ type UnmarshalOptions struct {
 // It will clear the message first before setting the fields.
 // If it returns an error, the given message may be partially set.
 // The provided message must be mutable (e.g., a non-nil pointer to a message).
-func (o UnmarshalOptions) Unmarshal(b []byte, m proto.Message) error {
+func (o JSONUnmarshalOptions) Unmarshal(b []byte, m proto.Message) error {
 	return o.unmarshal(b, m)
 }
 
 // unmarshal is a centralized function that all unmarshal operations go through.
 // For profiling purposes, avoid changing the name of this function or
 // introducing other code paths for unmarshal that do not go through this.
-func (o UnmarshalOptions) unmarshal(b []byte, m proto.Message) error {
+func (o JSONUnmarshalOptions) unmarshal(b []byte, m proto.Message) error {
 	proto.Reset(m)
 
 	if o.Resolver == nil {
@@ -98,7 +90,7 @@ func (o UnmarshalOptions) unmarshal(b []byte, m proto.Message) error {
 
 type decoder struct {
 	*json.Decoder
-	opts UnmarshalOptions
+	opts JSONUnmarshalOptions
 }
 
 // newError returns an error object with position info.
