@@ -31,7 +31,7 @@ type JSONPBMaybeMarshaler interface {
 	// "handled" result value is false, "b" and "err" are ignored and the default
 	// proto JSON behavior occurs. currIndent is the current prefix depth but
 	// should not be applied if m.Indent is empty.
-	MaybeMarshalJSONPB(meta map[string]interface{}, enc json.Encoder, currIndent string) (handled bool, b []byte, err error)
+	MaybeMarshalJSONPB(meta map[string]interface{}, enc *json.Encoder) (handled bool, err error)
 }
 
 // JSONPBMaybeUnmarshaler is implemented by any proto struct that wants to

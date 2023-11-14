@@ -1,3 +1,25 @@
+// The MIT License
+//
+// Copyright (c) 2022 Temporal Technologies Inc.  All rights reserved.
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+// THE SOFTWARE.
+
 // Copyright 2019 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
@@ -100,6 +122,10 @@ type JSONMarshalOptions struct {
 		protoregistry.ExtensionTypeResolver
 		protoregistry.MessageTypeResolver
 	}
+
+	// Metadata is used for storing request metadata, such as whether shorthand
+	// payloads are disabled
+	Metadata map[string]interface{}
 }
 
 // Format formats the message as a string.
@@ -139,6 +165,7 @@ func (o JSONMarshalOptions) marshal(b []byte, m proto.Message) ([]byte, error) {
 		o.Resolver = protoregistry.GlobalTypes
 	}
 
+	// TODO: we could presize the buffer here with a best-guess to reduce allocations
 	internalEnc, err := json.NewEncoder(b, o.Indent)
 	if err != nil {
 		return nil, err
@@ -204,11 +231,14 @@ func (e encoder) marshalMessage(m protoreflect.Message, typeURL string) error {
 	if marshal := wellKnownTypeMarshaler(m.Descriptor().FullName()); marshal != nil {
 		return marshal(e, m)
 	}
-	// if jsu, ok := m.Interface().(JSONPBMaybeMarshaler); ok {
-	// 	if handled, err := jsu.MaybeMarshalJSONPB(d.opts.Metadata, e.Encoder); handled {
-	// 		return err
-	// 	}
-	// }
+	if jsu, ok := m.Interface().(JSONPBMaybeMarshaler); ok {
+		if handled, err := jsu.MaybeMarshalJSONPB(e.opts.Metadata, e.Encoder); handled {
+			if err != nil {
+				return fmt.Errorf("MaybeMarshalJSONPB impl for %T failed: %w", jsu, err)
+			}
+			return nil
+		}
+	}
 
 	e.StartObject()
 	defer e.EndObject()

@@ -63,9 +63,11 @@ go-grpc: clean .go-helpers-installed $(PROTO_OUT)
 fix-path: go-grpc
 	mv -f $(PROTO_OUT)/temporal/api/* $(PROTO_OUT) && rm -rf $(PROTO_OUT)/temporal
 
+# Copy the payload helpers
 copy-helpers:
-	# Copy the payload helpers
+	chmod +w $(PROTO_OUT)/common/v1/payload_json.go || true
 	cp $(PROTO_OUT)/internal/temporalcommonv1/payload_json.go $(PROTO_OUT)/common/v1/
+	chmod -w $(PROTO_OUT)/common/v1/payload_json.go
 
 # The generated enums are go are just plain terrible, so we fix them
 # by removing the typename prefixes. We already made good choices with our enum
